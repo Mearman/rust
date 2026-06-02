@@ -1,9 +1,6 @@
 //! Validates all used crates and extern libraries and loads their metadata
 
 use std::collections::BTreeMap;
-// `Error` and `Duration` are only needed by the dylib-loading machinery, which
-// is itself gated to platforms that can dlopen. Gate the imports identically so
-// the wasm build (which uses the stub below) does not warn on unused imports.
 #[cfg(any(unix, windows))]
 use std::error::Error;
 use std::path::Path;
@@ -1533,10 +1530,9 @@ pub unsafe fn load_symbol_from_dylib<T: Copy>(
     Ok(*sym)
 }
 
-// Platforms without a dynamic loader (such as the wasm host) cannot dlopen a
-// codegen backend at runtime; backends are linked statically there instead. This
-// stub keeps the signature so callers compile, and reports the absence rather
-// than silently succeeding.
+// Hosts without dlopen (e.g. wasi) cannot load a proc-macro or codegen-backend
+// dylib at runtime. Surface that as an error rather than failing to compile; the
+// unix/windows implementation above is used everywhere it is available.
 #[cfg(not(any(unix, windows)))]
 pub unsafe fn load_symbol_from_dylib<T: Copy>(
     path: &Path,

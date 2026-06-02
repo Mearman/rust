@@ -97,10 +97,9 @@ pub fn link_binary(
             bug!("invalid output type `{:?}` for target `{}`", crate_type, sess.opts.target_triple);
         }
 
-        // The writeability probe relies on Unix/Windows file-permission
-        // semantics that the wasm host's sandboxed filesystem does not provide,
-        // so skip it there. On every other platform the check runs exactly as
-        // before.
+        // wasm hosts cannot query file metadata to test writeability, so skip the
+        // check there. On unix/windows `cfg!(not(target_family = "wasm"))` is
+        // `true` and every object is checked exactly as before.
         if cfg!(not(target_family = "wasm")) {
             sess.time("link_binary_check_files_are_writeable", || {
                 for m in &compiled_modules.modules {

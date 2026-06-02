@@ -131,9 +131,9 @@ pub(crate) fn get_linker<'a>(
     if !msvc_changed_path && let Some(path) = env::var_os("PATH") {
         new_path.extend(env::split_paths(&path));
     }
-    // wasm hosts have no `PATH` to extend and `env::join_paths` is meaningless
-    // there, so skip wiring up the linker's environment. On every other platform
-    // this sets `PATH` exactly as before.
+    // wasm hosts cannot spawn the linker as a subprocess, so there is no child
+    // environment to populate. Skip mutating `PATH` there; on unix/windows this
+    // sets it exactly as before.
     if cfg!(not(target_family = "wasm")) {
         cmd.env("PATH", env::join_paths(new_path).unwrap());
     }
