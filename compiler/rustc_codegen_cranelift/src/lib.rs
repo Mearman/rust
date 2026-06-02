@@ -177,6 +177,7 @@ impl CodegenBackend for CraneliftCodegenBackend {
     fn target_config(&self, sess: &Session) -> TargetConfig {
         // FIXME return the actually used target features. this is necessary for #[cfg(target_feature)]
         let target_features = match sess.target.arch {
+            #[allow(rustc::symbol_intern_string_literal)]
             Arch::X86_64 if sess.target.os != Os::None => {
                 // x86_64 mandates SSE2 support and rustc requires the x87 feature to be enabled
                 vec![sym::fxsr, sym::sse, sym::sse2, Symbol::intern("x87")]
