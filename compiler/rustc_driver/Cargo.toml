@@ -4,7 +4,11 @@ version = "0.0.0"
 edition = "2024"
 
 [lib]
-crate-type = ["dylib"]
+# `lib` is added alongside `dylib` so rustc can be linked statically (required
+# when a codegen backend is statically linked in via the off-by-default
+# `cranelift` feature). The `dylib` artefact is still produced, so normal builds
+# that hot-plug codegen backends are unaffected.
+crate-type = ["lib", "dylib"]
 
 [dependencies]
 # tidy-alphabetical-start

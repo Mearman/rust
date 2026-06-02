@@ -1,9 +1,14 @@
 //! Validates all used crates and extern libraries and loads their metadata
 
 use std::collections::BTreeMap;
+// `Error` and `Duration` are only needed by the dylib-loading machinery, which
+// is itself gated to platforms that can dlopen. Gate the imports identically so
+// the wasm build (which uses the stub below) does not warn on unused imports.
+#[cfg(any(unix, windows))]
 use std::error::Error;
 use std::path::Path;
 use std::str::FromStr;
+#[cfg(any(unix, windows))]
 use std::time::Duration;
 use std::{cmp, env, iter};
 
@@ -15,6 +20,7 @@ use rustc_data_structures::svh::Svh;
 use rustc_data_structures::sync::{self, FreezeReadGuard, FreezeWriteGuard};
 use rustc_data_structures::unord::UnordMap;
 use rustc_expand::base::SyntaxExtension;
+#[cfg(any(unix, windows))]
 use rustc_fs_util::try_canonicalize;
 use rustc_hir as hir;
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE, LocalDefId, StableCrateId};
@@ -1409,10 +1415,12 @@ fn fn_spans(krate: &ast::Crate, name: Symbol) -> Vec<Span> {
     f.spans
 }
 
+#[cfg(any(unix, windows))]
 fn format_dlopen_err(e: &(dyn std::error::Error + 'static)) -> String {
     e.sources().map(|e| format!(": {e}")).collect()
 }
 
+#[cfg(any(unix, windows))]
 fn attempt_load_dylib(path: &Path) -> Result<libloading::Library, libloading::Error> {
     #[cfg(target_os = "aix")]
     if let Some(ext) = path.extension()
@@ -1440,6 +1448,7 @@ fn attempt_load_dylib(path: &Path) -> Result<libloading::Library, libloading::Er
 // proc-macro DLL with `Error::LoadLibraryExW`. It is suspected that something in the
 // system still holds a lock on the file, so we retry a few times before calling it
 // an error.
+#[cfg(any(unix, windows))]
 fn load_dylib(path: &Path, max_attempts: usize) -> Result<libloading::Library, String> {
     assert!(max_attempts > 0);
 
@@ -1503,6 +1512,7 @@ impl From<DylibError> for CrateError {
     }
 }
 
+#[cfg(any(unix, windows))]
 pub unsafe fn load_symbol_from_dylib<T: Copy>(
     path: &Path,
     sym_name: &str,
@@ -1521,4 +1531,19 @@ pub unsafe fn load_symbol_from_dylib<T: Copy>(
     std::mem::forget(lib);
 
     Ok(*sym)
+}
+
+// Platforms without a dynamic loader (such as the wasm host) cannot dlopen a
+// codegen backend at runtime; backends are linked statically there instead. This
+// stub keeps the signature so callers compile, and reports the absence rather
+// than silently succeeding.
+#[cfg(not(any(unix, windows)))]
+pub unsafe fn load_symbol_from_dylib<T: Copy>(
+    path: &Path,
+    _sym_name: &str,
+) -> Result<T, DylibError> {
+    Err(DylibError::DlOpen(
+        path.display().to_string(),
+        "dlopen is not supported on this platform".to_owned(),
+    ))
 }

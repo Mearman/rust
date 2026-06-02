@@ -251,6 +251,15 @@ pub(crate) fn default_sysroot() -> PathBuf {
         rustlib_path.exists().then_some(p)
     }
 
+    // On the wasm host the usual sysroot-discovery routes are unavailable:
+    // there is no `argv[0]` symlink to follow and no loaded rustc_driver dll
+    // whose path can be walked. The wasm rustc is run with the sysroot mounted
+    // at a fixed location, so return it directly. Every other platform keeps the
+    // normal discovery.
+    if cfg!(target_os = "wasi") {
+        return PathBuf::from("dist");
+    }
+
     from_env_args_next()
         .unwrap_or_else(|| default_from_rustc_driver_dll().expect("Failed finding sysroot"))
 }

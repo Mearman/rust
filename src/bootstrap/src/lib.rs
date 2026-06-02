@@ -879,6 +879,17 @@ impl Build {
         if self.config.llvm_offload {
             features.push("llvm_offload");
         }
+        // Cranelift is statically linked into rustc (rather than hot-plugged as a
+        // dylib) whenever it is an enabled codegen backend for this target, or
+        // for `x check` so the statically linked code path is type-checked. For
+        // the default LLVM-only build neither condition holds, so the feature is
+        // not pushed and the dylib code path is unaffected.
+        if (self.config.enabled_codegen_backends(target).contains(&CodegenBackendKind::Cranelift)
+            || kind == Kind::Check)
+            && check("cranelift")
+        {
+            features.push("cranelift");
+        }
         // keep in sync with `bootstrap/compile.rs:rustc_cargo_env`
         if self.config.rust_randomize_layout && check("rustc_randomized_layouts") {
             features.push("rustc_randomized_layouts");

@@ -24,6 +24,11 @@ use rustc_session::Session;
 use rustc_session::config::{OutputFilenames, OutputType};
 
 use crate::base::CodegenedFunction;
+// The concurrency limiter coordinates codegen worker threads through the
+// jobserver. The wasm host has no threads, runs codegen synchronously, and the
+// jobserver helper thread is compiled out there, so the limiter is unused on
+// wasm. Every other platform keeps it.
+#[cfg(not(target_family = "wasm"))]
 use crate::concurrency_limiter::{ConcurrencyLimiter, ConcurrencyLimiterToken};
 use crate::debuginfo::TypeDebugContext;
 use crate::global_asm::{GlobalAsmConfig, GlobalAsmContext};
@@ -53,6 +58,7 @@ impl StableHash for OngoingModuleCodegen {
 pub(crate) struct OngoingCodegen {
     modules: Vec<OngoingModuleCodegen>,
     allocator_module: Option<CompiledModule>,
+    #[cfg(not(target_family = "wasm"))]
     concurrency_limiter: ConcurrencyLimiter,
 }
 
@@ -109,6 +115,7 @@ impl OngoingCodegen {
             modules.push(module);
         }
 
+        #[cfg(not(target_family = "wasm"))]
         self.concurrency_limiter.finished();
 
         sess.dcx().abort_if_errors();
@@ -353,7 +360,10 @@ fn module_codegen(
     tcx: TyCtxt<'_>,
     global_asm_config: Arc<GlobalAsmConfig>,
     cgu_name: rustc_span::Symbol,
-    token: ConcurrencyLimiterToken,
+    // The jobserver token is only held while a worker thread is alive. The wasm
+    // host runs codegen synchronously with no worker threads, so there is no
+    // token there.
+    #[cfg(not(target_family = "wasm"))] token: ConcurrencyLimiterToken,
 ) -> OngoingModuleCodegen {
     let mut module = make_module(tcx.sess, cgu_name.as_str().to_string());
 
@@ -368,7 +378,10 @@ fn module_codegen(
     let output_filenames = tcx.output_filenames(()).clone();
     let should_write_ir = crate::pretty_clif::should_write_ir(tcx.sess);
 
-    OngoingModuleCodegen::Async(std::thread::spawn(move || {
+    // The actual compilation work, identical whether it runs on a spawned worker
+    // thread (the default) or synchronously on the current thread (the wasm
+    // host, which has no threads).
+    let do_codegen = move || -> Result<ModuleCodegenResult, String> {
         profiler.clone().generic_activity_with_arg("compile functions", &*cgu_name).run(|| {
             cranelift_codegen::timing::set_thread_profiler(Box::new(super::MeasuremeProfiler(
                 profiler.clone(),
@@ -406,9 +419,21 @@ fn module_codegen(
                     &producer,
                 )
             });
-        std::mem::drop(token);
         codegen_result
-    }))
+    };
+
+    #[cfg(not(target_family = "wasm"))]
+    {
+        OngoingModuleCodegen::Async(std::thread::spawn(move || {
+            let codegen_result = do_codegen();
+            std::mem::drop(token);
+            codegen_result
+        }))
+    }
+    #[cfg(target_family = "wasm")]
+    {
+        OngoingModuleCodegen::Sync(do_codegen())
+    }
 }
 
 fn emit_allocator_module(tcx: TyCtxt<'_>) -> Option<CompiledModule> {
@@ -466,6 +491,7 @@ pub(crate) fn run_aot(tcx: TyCtxt<'_>) -> Box<OngoingCodegen> {
             CguReuse::PreLto | CguReuse::PostLto => false,
         });
 
+    #[cfg(not(target_family = "wasm"))]
     let concurrency_limiter = IntoDynSyncSend(ConcurrencyLimiter::new(todo_cgus.len()));
 
     let modules: Vec<_> =
@@ -480,6 +506,7 @@ pub(crate) fn run_aot(tcx: TyCtxt<'_>) -> Box<OngoingCodegen> {
                             tcx,
                             global_asm_config.clone(),
                             cgu.name(),
+                            #[cfg(not(target_family = "wasm"))]
                             concurrency_limiter.acquire(tcx.dcx()),
                         )
                     },
@@ -501,6 +528,7 @@ pub(crate) fn run_aot(tcx: TyCtxt<'_>) -> Box<OngoingCodegen> {
     Box::new(OngoingCodegen {
         modules,
         allocator_module,
+        #[cfg(not(target_family = "wasm"))]
         concurrency_limiter: concurrency_limiter.0,
     })
 }

@@ -51,7 +51,10 @@ members = [
 
 exclude = [
   "build",
-  "compiler/rustc_codegen_cranelift",
+  # `rustc_codegen_cranelift` is no longer excluded so it can be built as a
+  # statically linked codegen backend behind the off-by-default `cranelift`
+  # feature. It remains a path dependency only of `rustc_interface` (itself
+  # gated), so for normal LLVM builds the crate is never pulled into the graph.
   "compiler/rustc_codegen_gcc",
   "src/bootstrap",
   "tests/rustdoc-gui",
