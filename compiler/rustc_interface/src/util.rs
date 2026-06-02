@@ -102,11 +102,11 @@ pub(crate) fn check_abi_required_features(sess: &Session) {
 }
 
 pub static STACK_SIZE: OnceLock<usize> = OnceLock::new();
-// On most platforms compilation runs on a dedicated thread whose stack size we
-// set explicitly, so 8 MiB is plenty. The wasm host runs compilation
-// synchronously on the entry stack with no way to grow it, so it needs a larger
-// default to avoid overflowing on deep recursion. This only changes the default
-// on wasm; every other platform keeps 8 MiB.
+// On most hosts compilation runs on a freshly spawned worker thread whose stack size we control
+// directly, so the conventional 8 MiB default is plenty. The wasm host runs compilation
+// synchronously on the entry stack with no way to grow it, so it needs a more generous default to
+// avoid overflowing on deep recursion. `RUST_MIN_STACK` still overrides this on every platform
+// (see `init_stack_size`), and non-wasm hosts keep the documented 8 MiB default.
 #[cfg(not(target_family = "wasm"))]
 pub const DEFAULT_STACK_SIZE: usize = 8 * 1024 * 1024;
 #[cfg(target_family = "wasm")]
