@@ -9,6 +9,8 @@ on:
   push:
     branches:
       - integration
+    paths-ignore:
+      - '.github/workflows/regression.yml'
   workflow_dispatch:
 
 jobs:

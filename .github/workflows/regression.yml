@@ -1,0 +1,115 @@
+# Normal-platform regression test for the host-portability slices.
+#
+# Each of the five PR slices is built with the DEFAULT rustc configuration
+# (native host, LLVM backend, cranelift feature off) on Linux, macOS and
+# Windows, then used to compile and run a hello-world, and exercised with the
+# targeted test suites for the areas the slices touch (bootstrap wiring and
+# rustc_data_structures, which owns the jobserver). Every slice change sits
+# behind cfg(target_family = "wasm") / cfg(target_os = "wasi") or the
+# off-by-default `cranelift` feature, so on these builds the changed paths are
+# compiled out — this confirms the fallbacks are genuine no-ops and nothing
+# regresses compilation on the normal platforms.
+
+name: regression
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - integration
+    paths:
+      - '.github/workflows/regression.yml'
+
+jobs:
+  build:
+    name: ${{ matrix.slice }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        slice:
+          - static-linking
+          - threading
+          - graceful-absent
+          - jobserver
+          - stack-size
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Check out the slice branch
+        uses: actions/checkout@v5
+        with:
+          ref: host-portability/${{ matrix.slice }}
+          fetch-depth: 0
+
+      - name: Free up disk space
+        if: runner.os != 'Windows'
+        run: |
+          sudo rm -rf /opt/hostedtoolcache /usr/local/lib/android \
+            /usr/share/dotnet /usr/local/.ghcup /usr/local/share/powershell || true
+          df -h /
+
+      - name: Reshape tip so HEAD^1 is the upstream baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.email "ci@local"
+          git config user.name "fork ci"
+          base=$(git rev-list --author-date-order --author='bors@rust-lang.org' -n1 HEAD)
+          echo "upstream baseline: ${base}"
+          git switch -c ci-build "${base}"
+          git merge --no-ff --no-edit "${GITHUB_SHA}" \
+            -m "regression: build slice with upstream first parent"
+          echo "HEAD^1 is now $(git rev-parse HEAD^1) (expected ${base})"
+
+      - name: Write default-config bootstrap.toml
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > bootstrap.toml <<'EOF'
+          # Default native configuration: LLVM backend, native host/target,
+          # cranelift feature off. This is the "normal platform" build.
+          profile = "compiler"
+          change-id = 9999999
+
+          [llvm]
+          download-ci-llvm = true
+
+          [rust]
+          deny-warnings = false
+          debug = false
+          debuginfo-level = 0
+
+          [build]
+          docs = false
+          extended = false
+          tools = []
+          EOF
+          cat bootstrap.toml
+
+      - name: Build rustc (default config, stage 1)
+        shell: bash
+        run: |
+          set -euo pipefail
+          PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python
+          "$PY" x.py build --stage 1
+
+      - name: Hello-world sanity (compile + link + run)
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc_bin=$(find build -type f \( -name rustc -o -name rustc.exe \) -path '*stage1*bin*' | head -1)
+          echo "using ${rustc_bin}"
+          echo 'fn main() { println!("regression sanity ok"); }' > hello.rs
+          "$rustc_bin" hello.rs
+          ./hello || ./hello.exe
+
+      - name: Targeted tests (bootstrap + jobserver-owning crate)
+        shell: bash
+        run: |
+          set -euo pipefail
+          PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python
+          "$PY" x.py test bootstrap
+          "$PY" x.py test compiler/rustc_data_structures
