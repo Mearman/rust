@@ -100,29 +100,41 @@ impl Proxy {
             wake_pending: Condvar::new(),
             helper: OnceLock::new(),
         });
-        let proxy_ = Arc::clone(&proxy);
-        let helper = proxy
-            .client
-            .clone()
-            .into_helper_thread(move |token| {
-                if let Ok(token) = token {
-                    let mut data = proxy_.data.lock();
-                    if data.pending > 0 {
-                        // Give the token to a waiting thread
-                        token.drop_without_releasing();
-                        assert!(data.used > 0);
-                        data.used += 1;
-                        data.pending -= 1;
-                        proxy_.wake_pending.notify_one();
-                    } else {
-                        // The token is no longer needed, drop it.
-                        drop(data);
-                        drop(token);
+        // Hosts that cannot spawn threads (e.g. `wasm32-wasip1` without the
+        // threads proposal) run compilation synchronously on the calling
+        // thread, so there is no worker thread to hand tokens to. Creating the
+        // jobserver helper thread there would panic, so we skip it: the proxy
+        // simply holds on to its single implicit token and `helper` stays
+        // empty. `acquire_thread`/`release_thread` are only driven by the
+        // parallel thread pool, which is never started on such hosts, so the
+        // empty `helper` is never observed. On every threaded platform this is
+        // a no-op and the helper thread is created exactly as before.
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let proxy_ = Arc::clone(&proxy);
+            let helper = proxy
+                .client
+                .clone()
+                .into_helper_thread(move |token| {
+                    if let Ok(token) = token {
+                        let mut data = proxy_.data.lock();
+                        if data.pending > 0 {
+                            // Give the token to a waiting thread
+                            token.drop_without_releasing();
+                            assert!(data.used > 0);
+                            data.used += 1;
+                            data.pending -= 1;
+                            proxy_.wake_pending.notify_one();
+                        } else {
+                            // The token is no longer needed, drop it.
+                            drop(data);
+                            drop(token);
+                        }
                     }
-                }
-            })
-            .expect("failed to create helper thread");
-        proxy.helper.set(helper).unwrap();
+                })
+                .expect("failed to create helper thread");
+            proxy.helper.set(helper).unwrap();
+        }
         proxy
     }
 
