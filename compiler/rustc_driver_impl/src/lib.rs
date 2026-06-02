@@ -1423,7 +1423,10 @@ fn ice_path_with_config(config: Option<&UnstableOptions>) -> &'static Option<Pat
         };
         // Don't use a standard datetime format because Windows doesn't support `:` in paths
         let file_now = jiff::Zoned::now().strftime("%Y-%m-%dT%H_%M_%S");
-        let pid = std::process::id();
+        // wasm hosts have no notion of a process id; fall back to a fixed value
+        // so the ICE report filename is still well-formed. On unix/windows this
+        // returns the real process id as before.
+        let pid = if cfg!(target_family = "wasm") { 1 } else { std::process::id() };
         path.push(format!("rustc-ice-{file_now}-{pid}.txt"));
         Some(path)
     })

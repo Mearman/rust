@@ -97,16 +97,21 @@ pub fn link_binary(
             bug!("invalid output type `{:?}` for target `{}`", crate_type, sess.opts.target_triple);
         }
 
-        sess.time("link_binary_check_files_are_writeable", || {
-            for m in &compiled_modules.modules {
-                if let Some(obj) = &m.object {
-                    check_file_is_writeable(obj, sess);
+        // wasm hosts cannot query file metadata to test writeability, so skip the
+        // check there. On unix/windows `cfg!(not(target_family = "wasm"))` is
+        // `true` and every object is checked exactly as before.
+        if cfg!(not(target_family = "wasm")) {
+            sess.time("link_binary_check_files_are_writeable", || {
+                for m in &compiled_modules.modules {
+                    if let Some(obj) = &m.object {
+                        check_file_is_writeable(obj, sess);
+                    }
+                    if let Some(obj) = &m.global_asm_object {
+                        check_file_is_writeable(obj, sess);
+                    }
                 }
-                if let Some(obj) = &m.global_asm_object {
-                    check_file_is_writeable(obj, sess);
-                }
-            }
-        });
+            });
+        }
 
         if outputs.outputs.should_link() {
             let output = out_filename(sess, crate_type, outputs, crate_info.local_crate_name);

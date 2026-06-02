@@ -3,6 +3,8 @@
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
+// Only used by the unix/windows `current_dll_path` implementations below.
+#[cfg(any(unix, windows))]
 use rustc_fs_util::try_canonicalize;
 use rustc_target::spec::Target;
 
@@ -249,6 +251,14 @@ pub(crate) fn default_sysroot() -> PathBuf {
         let mut rustlib_path = rustc_target::relative_target_rustlib_path(&p, "dummy");
         rustlib_path.pop(); // pop off the dummy target.
         rustlib_path.exists().then_some(p)
+    }
+
+    // wasi hosts cannot dlopen the rustc_driver dll to locate the sysroot, so
+    // neither sysroot-discovery strategy below is available. Fall back to a
+    // fixed relative sysroot. On unix/windows this branch is compiled out and
+    // discovery proceeds exactly as before.
+    if cfg!(target_os = "wasi") {
+        return PathBuf::from("dist");
     }
 
     from_env_args_next()
