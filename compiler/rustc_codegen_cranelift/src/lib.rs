@@ -12,23 +12,45 @@
 
 #[macro_use]
 extern crate rustc_middle;
+// When statically linked (`cranelift` feature), these crates are ordinary Cargo
+// path dependencies and are resolved through the extern prelude, so the explicit
+// `extern crate` declarations the hot-plugged dylib build relies on are both
+// unnecessary and rejected. The default dylib build keeps them.
+#[cfg(not(feature = "cranelift"))]
 extern crate rustc_abi;
+#[cfg(not(feature = "cranelift"))]
 extern crate rustc_ast;
+#[cfg(not(feature = "cranelift"))]
 extern crate rustc_codegen_ssa;
+#[cfg(not(feature = "cranelift"))]
 extern crate rustc_const_eval;
+#[cfg(not(feature = "cranelift"))]
 extern crate rustc_data_structures;
+#[cfg(not(feature = "cranelift"))]
 extern crate rustc_errors;
+#[cfg(not(feature = "cranelift"))]
 extern crate rustc_fs_util;
+#[cfg(not(feature = "cranelift"))]
 extern crate rustc_hir;
+#[cfg(not(feature = "cranelift"))]
 extern crate rustc_incremental;
+#[cfg(not(feature = "cranelift"))]
 extern crate rustc_index;
+#[cfg(not(feature = "cranelift"))]
 extern crate rustc_log;
+#[cfg(not(feature = "cranelift"))]
 extern crate rustc_session;
+#[cfg(not(feature = "cranelift"))]
 extern crate rustc_span;
+#[cfg(not(feature = "cranelift"))]
 extern crate rustc_symbol_mangling;
+#[cfg(not(feature = "cranelift"))]
 extern crate rustc_target;
 
-// This prevents duplicating functions and statics that are already part of the host rustc process.
+// This prevents duplicating functions and statics that are already part of the
+// host rustc process. Only relevant when hot-plugged as a dylib; a statically
+// linked backend shares the one rustc_driver already linked into the host.
+#[cfg(not(feature = "cranelift"))]
 #[allow(unused_extern_crates)]
 extern crate rustc_driver;
 
@@ -367,8 +389,12 @@ fn build_isa(sess: &Session, jit: bool) -> Arc<dyn TargetIsa + 'static> {
     }
 }
 
-/// This is the entrypoint for a hot plugged rustc_codegen_cranelift
-#[unsafe(no_mangle)]
+/// This is the entrypoint for a hot plugged rustc_codegen_cranelift.
+///
+/// When statically linked (`cranelift` feature) rustc_interface calls this
+/// directly by path, so the `#[unsafe(no_mangle)]` symbol export the dylib
+/// dlopen path depends on is omitted to avoid a duplicate unmangled symbol.
+#[cfg_attr(not(feature = "cranelift"), unsafe(no_mangle))]
 pub fn __rustc_codegen_backend() -> Box<dyn CodegenBackend> {
     Box::new(CraneliftCodegenBackend { config: OnceCell::new() })
 }

@@ -2425,11 +2425,6 @@ impl Step for Assemble {
                 };
 
                 match backend {
-                    CodegenBackendKind::Cranelift => {
-                        let stamp = builder
-                            .ensure(CraneliftCodegenBackend { compilers: prepare_compilers() });
-                        copy_codegen_backends_to_sysroot(builder, stamp, target_compiler);
-                    }
                     CodegenBackendKind::Gcc => {
                         // We need to build cg_gcc for the host target of the compiler which we
                         // build here, which is `target_compiler`.
@@ -2499,7 +2494,15 @@ impl Step for Assemble {
                         // library sysroots, so that they are available for cg_gcc.
                         dylib_set.install_to(builder, target_compiler);
                     }
-                    CodegenBackendKind::Llvm | CodegenBackendKind::Custom(_) => continue,
+                    // Cranelift is no longer built as a separate hot-plugged
+                    // dylib: it is linked statically into rustc via the
+                    // `cranelift` cargo feature (enabled in `rustc_features`
+                    // when it is an enabled codegen backend), so there is
+                    // nothing to assemble as an external backend here. Llvm and
+                    // custom backends are likewise not assembled at this step.
+                    CodegenBackendKind::Cranelift
+                    | CodegenBackendKind::Llvm
+                    | CodegenBackendKind::Custom(_) => continue,
                 }
             }
         }

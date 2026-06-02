@@ -4,7 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [lib]
-crate-type = ["dylib"]
+# `lib` is added alongside `dylib` so the crate can be linked statically into
+# rustc_interface behind the off-by-default `cranelift` feature. The `dylib`
+# artefact is still produced, so the hot-plugged codegen-backend path used by
+# normal LLVM/GCC builds is unchanged.
+crate-type = ["lib", "dylib"]
 
 [dependencies]
 # These have to be in sync with each other
@@ -22,7 +26,32 @@ indexmap = "2.0.0"
 libloading = { version = "0.9.0", optional = true }
 smallvec = "1.8.1"
 
-[patch.crates-io]
+# When statically linked (the off-by-default `cranelift` feature), the rustc
+# internals are pulled in as ordinary path dependencies rather than via
+# `extern crate` against the sysroot. These are optional and enabled only by
+# the `cranelift` feature, so the default dylib build (used by normal LLVM/GCC
+# builds) does not pull them into the dependency graph.
+rustc_middle = { path = "../rustc_middle", optional = true }
+rustc_abi = { path = "../rustc_abi", optional = true }
+rustc_ast = { path = "../rustc_ast", optional = true }
+rustc_codegen_ssa = { path = "../rustc_codegen_ssa", optional = true }
+rustc_const_eval = { path = "../rustc_const_eval", optional = true }
+rustc_data_structures = { path = "../rustc_data_structures", optional = true }
+rustc_errors = { path = "../rustc_errors", optional = true }
+rustc_fs_util = { path = "../rustc_fs_util", optional = true }
+rustc_hir = { path = "../rustc_hir", optional = true }
+rustc_incremental = { path = "../rustc_incremental", optional = true }
+rustc_index = { path = "../rustc_index", optional = true }
+rustc_log = { path = "../rustc_log", optional = true }
+rustc_session = { path = "../rustc_session", optional = true }
+rustc_span = { path = "../rustc_span", optional = true }
+rustc_symbol_mangling = { path = "../rustc_symbol_mangling", optional = true }
+rustc_target = { path = "../rustc_target", optional = true }
+
+# `[patch.crates-io]` is only honoured in the workspace root manifest. Now that
+# this crate is a workspace member (for static linking) it must stay commented
+# out here; move any override to the root Cargo.toml when needed.
+#[patch.crates-io]
 # Uncomment to use an unreleased version of cranelift
 #cranelift-codegen = { git = "https://github.com/bytecodealliance/wasmtime.git", branch = "release-44.0.0" }
 #cranelift-frontend = { git = "https://github.com/bytecodealliance/wasmtime.git", branch = "release-44.0.0" }
@@ -42,6 +71,29 @@ smallvec = "1.8.1"
 #gimli = { path = "../" }
 
 [features]
+# Build as a statically linked codegen backend rather than a hot-plugged dylib.
+# Off by default: enabling it switches the crate from depending on rustc
+# internals via `extern crate` (against the sysroot) to depending on them as
+# ordinary path dependencies, and drops the `#[unsafe(no_mangle)]` entrypoint
+# shim. Normal LLVM/GCC builds never enable this, so the dylib path is unchanged.
+cranelift = [
+    "dep:rustc_middle",
+    "dep:rustc_abi",
+    "dep:rustc_ast",
+    "dep:rustc_codegen_ssa",
+    "dep:rustc_const_eval",
+    "dep:rustc_data_structures",
+    "dep:rustc_errors",
+    "dep:rustc_fs_util",
+    "dep:rustc_hir",
+    "dep:rustc_incremental",
+    "dep:rustc_index",
+    "dep:rustc_log",
+    "dep:rustc_session",
+    "dep:rustc_span",
+    "dep:rustc_symbol_mangling",
+    "dep:rustc_target",
+]
 # Enable features not ready to be enabled when compiling as part of rustc
 unstable-features = ["jit", "inline_asm_sym"]
 jit = ["cranelift-jit", "libloading"]
