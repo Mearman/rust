@@ -32,6 +32,11 @@ jobs:
     steps:
       - name: Check out the integration branch
         uses: actions/checkout@v5
+        with:
+          # Full history: bootstrap's check_path_modifications runs `git rev-parse
+          # HEAD^1` to decide download-ci-llvm freshness; a shallow checkout makes
+          # that fail (exit 128) and forces a 1.5h LLVM-from-source build.
+          fetch-depth: 0
 
       - name: Download and extract wasi-sdk-32
         run: |
