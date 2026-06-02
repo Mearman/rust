@@ -1,0 +1,114 @@
+# Builds rustc for the wasm32-wasip1 host (the host-portability integration test)
+# and runs the wasmtime smoke test from the workspace README. The compiler host is
+# wasm32-wasip1 on both legs; the matrix varies the Linux build host (x86_64 and
+# aarch64), the wasi-sdk archive, and the native build target accordingly.
+
+name: wasm-rustc
+
+on:
+  push:
+    branches:
+      - integration
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.arch }} host
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+            wasi_sdk: wasi-sdk-32.0-x86_64-linux
+            target: x86_64-unknown-linux-gnu
+            cc: gcc
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            wasi_sdk: wasi-sdk-32.0-arm64-linux
+            target: aarch64-unknown-linux-gnu
+            cc: gcc
+    steps:
+      - name: Check out the integration branch
+        uses: actions/checkout@v5
+
+      - name: Download and extract wasi-sdk-32
+        run: |
+          set -euo pipefail
+          archive="${{ matrix.wasi_sdk }}.tar.gz"
+          url="https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-32/${archive}"
+          echo "Fetching ${url}"
+          curl --fail --location --retry 3 --output "${archive}" "${url}"
+          tar -xf "${archive}"
+          test -d "${{ matrix.wasi_sdk }}"
+
+      - name: Install wasmtime
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 https://wasmtime.dev/install.sh | bash
+          echo "${HOME}/.wasmtime/bin" >> "${GITHUB_PATH}"
+
+      - name: Write bootstrap.toml
+        run: |
+          set -euo pipefail
+          cat > bootstrap.toml <<EOF
+          profile = "compiler"
+          change-id = 9999999
+
+          [llvm]
+          download-ci-llvm = true
+
+          [rust]
+          codegen-backends = ["llvm"]
+          deny-warnings = false
+          llvm-tools = false
+          llvm-bitcode-linker = false
+          debug = false
+          debuginfo-level = 0
+
+          [build]
+          docs = false
+          extended = false
+          tools = []
+          host = ["wasm32-wasip1"]
+          target = ["${{ matrix.target }}"]
+
+          [install]
+          prefix = "dist"
+          sysconfdir = "etc"
+
+          [target.'wasm32-wasip1']
+          wasi-root = "${{ matrix.wasi_sdk }}/share/wasi-sysroot"
+          linker = "${{ matrix.wasi_sdk }}/bin/clang"
+          codegen-backends = ["cranelift"]
+
+          [target.'${{ matrix.target }}']
+          cc = "${{ matrix.cc }}"
+          EOF
+          cat bootstrap.toml
+
+      - name: Build and install rustc for the wasm32-wasip1 host
+        run: |
+          set -euo pipefail
+          export WASI_SDK_PATH="$(pwd)/${{ matrix.wasi_sdk }}"
+          # download-ci-llvm can 404 when the fork's LLVM submodule commit has no
+          # CI artefact. Try the fast path first; on failure, fall back to
+          # building LLVM from source and rebuild.
+          if ! ./x.py install; then
+            echo "Install failed on the download-ci-llvm path; rebuilding LLVM from source"
+            sed -i 's/^download-ci-llvm = true$/download-ci-llvm = false/' bootstrap.toml
+            cat bootstrap.toml
+            ./x.py install
+          fi
+
+      - name: Smoke test rustc.wasm under wasmtime
+        run: |
+          set -euo pipefail
+          mkdir -p tmp
+          echo 'fn main() { println!("hi"); }' \
+            | wasmtime run -Spreview2=n --dir tmp::/ --dir dist \
+                --env RUST_MIN_STACK=16777216 \
+                dist/bin/rustc.wasm - --sysroot dist \
+                --target ${{ matrix.target }} --emit=obj -o /hello.o
+          test -s tmp/hello.o && echo OK
