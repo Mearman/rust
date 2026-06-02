@@ -102,7 +102,15 @@ pub(crate) fn check_abi_required_features(sess: &Session) {
 }
 
 pub static STACK_SIZE: OnceLock<usize> = OnceLock::new();
+// On most platforms compilation runs on a dedicated thread whose stack size we
+// set explicitly, so 8 MiB is plenty. The wasm host runs compilation
+// synchronously on the entry stack with no way to grow it, so it needs a larger
+// default to avoid overflowing on deep recursion. This only changes the default
+// on wasm; every other platform keeps 8 MiB.
+#[cfg(not(target_family = "wasm"))]
 pub const DEFAULT_STACK_SIZE: usize = 8 * 1024 * 1024;
+#[cfg(target_family = "wasm")]
+pub const DEFAULT_STACK_SIZE: usize = 32 * 1024 * 1024;
 
 fn init_stack_size(early_dcx: &EarlyDiagCtxt) -> usize {
     // Obey the environment setting or default
@@ -132,6 +140,7 @@ fn init_stack_size(early_dcx: &EarlyDiagCtxt) -> usize {
     })
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn run_in_thread_with_globals<F: FnOnce(CurrentGcx, Arc<Proxy>) -> R + Send, R: Send>(
     thread_stack_size: usize,
     edition: Edition,
@@ -168,6 +177,23 @@ fn run_in_thread_with_globals<F: FnOnce(CurrentGcx, Arc<Proxy>) -> R + Send, R: 
             Ok(v) => v,
             Err(e) => std::panic::resume_unwind(e),
         }
+    })
+}
+
+// The wasm host (`wasm32-wasip1`) has no thread support, so there is no thread
+// to spawn and no separate stack size to set. Run the session globals and `f`
+// directly on the current thread instead; the larger `DEFAULT_STACK_SIZE` for
+// wasm compensates for not having a dedicated, sized compilation thread.
+#[cfg(target_family = "wasm")]
+fn run_in_thread_with_globals<F: FnOnce(CurrentGcx, Arc<Proxy>) -> R + Send, R: Send>(
+    _thread_stack_size: usize,
+    edition: Edition,
+    sm_inputs: SourceMapInputs,
+    extra_symbols: &[&'static str],
+    f: F,
+) -> R {
+    rustc_span::create_session_globals_then(edition, extra_symbols, Some(sm_inputs), || {
+        f(CurrentGcx::new(), Proxy::new())
     })
 }
 
