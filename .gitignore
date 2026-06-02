@@ -104,3 +104,9 @@ flake.lock
 /default.nix
 
 # Before adding new lines, see the comment at the top.
+
+## wasm host build (integration only, not part of any upstream PR)
+/wasi-sdk-*
+/wabt-*
+/tmp
+/rust_out

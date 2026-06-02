@@ -1,0 +1,38 @@
+# Build configuration for the wasm32-wasip1 host build.
+#
+# Integration-only scaffolding: this file is not part of any upstream PR. It
+# configures bootstrap to build rustc for the wasm32-wasip1 host with the
+# Cranelift backend, which is the end-to-end test for the host-portability
+# slices on the integration branch.
+profile = "compiler"
+change-id = 9999999
+
+[llvm]
+download-ci-llvm = true   # fast; set false to build LLVM from source if the artefact 404s for the fork commit
+
+[rust]
+codegen-backends = ["llvm"]
+deny-warnings = false
+llvm-tools = false
+llvm-bitcode-linker = false
+debug = false
+debuginfo-level = 0
+
+[build]
+docs = false
+extended = false
+tools = []
+host = ["wasm32-wasip1"]            # non-threaded: the threading change runs compilation synchronously
+target = ["x86_64-unknown-linux-gnu"]
+
+[install]
+prefix = "dist"
+sysconfdir = "etc"
+
+[target.'wasm32-wasip1']
+wasi-root = "wasi-sdk-32.0-x86_64-linux/share/wasi-sysroot"
+linker = "wasi-sdk-32.0-x86_64-linux/bin/clang"
+codegen-backends = ["cranelift"]
+
+[target.'x86_64-unknown-linux-gnu']
+cc = "gcc"
