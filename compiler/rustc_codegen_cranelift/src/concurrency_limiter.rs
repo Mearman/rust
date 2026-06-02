@@ -17,28 +17,40 @@ impl ConcurrencyLimiter {
         let state = Arc::new(Mutex::new(state::ConcurrencyLimiterState::new(pending_jobs)));
         let available_token_condvar = Arc::new(Condvar::new());
 
-        let state_helper = state.clone();
-        let available_token_condvar_helper = available_token_condvar.clone();
-        let helper_thread = jobserver::client()
-            .clone()
-            .into_helper_thread(move |token| {
-                let mut state = state_helper.lock().unwrap();
-                match token {
-                    Ok(token) => {
-                        state.add_new_token(token);
-                        available_token_condvar_helper.notify_one();
+        // The jobserver helper thread requests extra tokens so codegen units can
+        // run in parallel. Hosts without thread support (e.g. wasm) cannot spawn
+        // it and do not need it: codegen there runs synchronously, so at most one
+        // job is ever active and the implicit jobserver token always satisfies
+        // `acquire` without the helper thread ever being consulted.
+        #[cfg(not(target_family = "wasm"))]
+        let helper_thread = {
+            let state_helper = state.clone();
+            let available_token_condvar_helper = available_token_condvar.clone();
+            let helper_thread = jobserver::client()
+                .clone()
+                .into_helper_thread(move |token| {
+                    let mut state = state_helper.lock().unwrap();
+                    match token {
+                        Ok(token) => {
+                            state.add_new_token(token);
+                            available_token_condvar_helper.notify_one();
+                        }
+                        Err(err) => {
+                            state.poison(format!("failed to acquire jobserver token: {}", err));
+                            // Notify all threads waiting for a token to give them a chance to
+                            // gracefully exit.
+                            available_token_condvar_helper.notify_all();
+                        }
                     }
-                    Err(err) => {
-                        state.poison(format!("failed to acquire jobserver token: {}", err));
-                        // Notify all threads waiting for a token to give them a chance to
-                        // gracefully exit.
-                        available_token_condvar_helper.notify_all();
-                    }
-                }
-            })
-            .unwrap();
+                })
+                .unwrap();
+            Some(Mutex::new(helper_thread))
+        };
+        #[cfg(target_family = "wasm")]
+        let helper_thread = None;
+
         ConcurrencyLimiter {
-            helper_thread: Some(Mutex::new(helper_thread)),
+            helper_thread,
             state,
             available_token_condvar,
             finished: false,
