@@ -111,5 +111,8 @@ jobs:
         run: |
           set -euo pipefail
           PY=python3; command -v "$PY" >/dev/null 2>&1 || PY=python
-          "$PY" x.py test bootstrap
-          "$PY" x.py test compiler/rustc_data_structures
+          # Pass --stage 1 explicitly: bootstrap asserts --stage 2 for `test` on CI
+          # only when no stage is given. An explicit stage skips that guard and
+          # matches the stage-1 compiler built above.
+          "$PY" x.py test bootstrap --stage 1
+          "$PY" x.py test compiler/rustc_data_structures --stage 1
