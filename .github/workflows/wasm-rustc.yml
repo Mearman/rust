@@ -38,6 +38,33 @@ jobs:
           # that fail (exit 128) and forces a 1.5h LLVM-from-source build.
           fetch-depth: 0
 
+      - name: Free up disk space
+        run: |
+          # An LLVM-from-source build (the download-ci-llvm fallback) plus the
+          # full compiler overruns the runner's ~14 GB root disk. Reclaim the
+          # pre-installed toolchains we don't use (~25 GB).
+          sudo rm -rf /opt/hostedtoolcache /usr/local/lib/android \
+            /usr/share/dotnet /usr/local/.ghcup /usr/local/share/powershell || true
+          df -h /
+
+      - name: Reshape tip so HEAD^1 is the upstream baseline
+        run: |
+          set -euo pipefail
+          # On GitHub Actions, bootstrap assumes HEAD^1 is the most recently merged
+          # upstream commit and downloads ci-llvm for it. Our integration tip's
+          # first parent is one of our own commits (no ci-llvm artefact -> 404 ->
+          # slow LLVM-from-source). Recreate the tip as a merge whose first parent
+          # is the upstream bors baseline (detected the same way bootstrap does
+          # off-CI), so HEAD^1 resolves to a commit that has a ci-llvm artefact.
+          git config user.email "ci@local"
+          git config user.name "fork ci"
+          base=$(git rev-list --author-date-order --author='bors@rust-lang.org' -n1 HEAD)
+          echo "upstream baseline: ${base}"
+          git switch -c ci-build "${base}"
+          git merge --no-ff --no-edit "${GITHUB_SHA}" \
+            -m "CI: build integration with upstream first parent"
+          echo "HEAD^1 is now $(git rev-parse HEAD^1) (expected ${base})"
+
       - name: Download and extract wasi-sdk-32
         run: |
           set -euo pipefail
