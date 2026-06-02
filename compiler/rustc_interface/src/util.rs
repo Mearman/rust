@@ -139,36 +139,58 @@ fn run_in_thread_with_globals<F: FnOnce(CurrentGcx, Arc<Proxy>) -> R + Send, R: 
     extra_symbols: &[&'static str],
     f: F,
 ) -> R {
+    // On hosts that cannot spawn threads (e.g. `wasm32-wasip1` without the
+    // threads proposal) we run the closure inline on the calling thread. The
+    // non-parallel compiler does not require a worker thread for correctness:
+    // it is used elsewhere only to control the stack size and to mirror the
+    // parallel compiler's data-sharing discipline. The caller is responsible
+    // for arranging sufficient stack (see `RUST_MIN_STACK`), so we ignore
+    // `thread_stack_size` here.
+    #[cfg(target_family = "wasm")]
+    {
+        let _ = thread_stack_size;
+        return rustc_span::create_session_globals_then(
+            edition,
+            extra_symbols,
+            Some(sm_inputs),
+            || f(CurrentGcx::new(), Proxy::new()),
+        );
+    }
+
     // The "thread pool" is a single spawned thread in the non-parallel
     // compiler. We run on a spawned thread instead of the main thread (a) to
     // provide control over the stack size, and (b) to increase similarity with
     // the parallel compiler, in particular to ensure there is no accidental
     // sharing of data between the main thread and the compilation thread
     // (which might cause problems for the parallel compiler).
-    let builder = thread::Builder::new().name("rustc".to_string()).stack_size(thread_stack_size);
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let builder =
+            thread::Builder::new().name("rustc".to_string()).stack_size(thread_stack_size);
 
-    // We build the session globals and run `f` on the spawned thread, because
-    // `SessionGlobals` does not impl `Send` in the non-parallel compiler.
-    thread::scope(|s| {
-        // `unwrap` is ok here because `spawn_scoped` only panics if the thread
-        // name contains null bytes.
-        let r = builder
-            .spawn_scoped(s, move || {
-                rustc_span::create_session_globals_then(
-                    edition,
-                    extra_symbols,
-                    Some(sm_inputs),
-                    || f(CurrentGcx::new(), Proxy::new()),
-                )
-            })
-            .unwrap()
-            .join();
+        // We build the session globals and run `f` on the spawned thread, because
+        // `SessionGlobals` does not impl `Send` in the non-parallel compiler.
+        thread::scope(|s| {
+            // `unwrap` is ok here because `spawn_scoped` only panics if the thread
+            // name contains null bytes.
+            let r = builder
+                .spawn_scoped(s, move || {
+                    rustc_span::create_session_globals_then(
+                        edition,
+                        extra_symbols,
+                        Some(sm_inputs),
+                        || f(CurrentGcx::new(), Proxy::new()),
+                    )
+                })
+                .unwrap()
+                .join();
 
-        match r {
-            Ok(v) => v,
-            Err(e) => std::panic::resume_unwind(e),
-        }
-    })
+            match r {
+                Ok(v) => v,
+                Err(e) => std::panic::resume_unwind(e),
+            }
+        })
+    }
 }
 
 pub(crate) fn run_in_thread_pool_with_globals<

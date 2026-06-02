@@ -368,7 +368,12 @@ fn module_codegen(
     let output_filenames = tcx.output_filenames(()).clone();
     let should_write_ir = crate::pretty_clif::should_write_ir(tcx.sess);
 
-    OngoingModuleCodegen::Async(std::thread::spawn(move || {
+    // The body that compiles and emits a single codegen unit. On threaded hosts
+    // this is moved onto a freshly spawned worker thread (`OngoingModuleCodegen::Async`)
+    // exactly as before. On hosts that cannot spawn threads (e.g. `wasm32-wasip1`
+    // without the threads proposal) it runs inline on the calling thread and the
+    // result is wrapped in `OngoingModuleCodegen::Sync`.
+    let work = move || {
         profiler.clone().generic_activity_with_arg("compile functions", &*cgu_name).run(|| {
             cranelift_codegen::timing::set_thread_profiler(Box::new(super::MeasuremeProfiler(
                 profiler.clone(),
@@ -406,9 +411,21 @@ fn module_codegen(
                     &producer,
                 )
             });
+        // The concurrency limiter token is held for the duration of the work and
+        // released once the codegen unit is done, whether the work ran on a worker
+        // thread or inline.
         std::mem::drop(token);
         codegen_result
-    }))
+    };
+
+    #[cfg(not(target_family = "wasm"))]
+    {
+        OngoingModuleCodegen::Async(std::thread::spawn(work))
+    }
+    #[cfg(target_family = "wasm")]
+    {
+        OngoingModuleCodegen::Sync(work())
+    }
 }
 
 fn emit_allocator_module(tcx: TyCtxt<'_>) -> Option<CompiledModule> {
