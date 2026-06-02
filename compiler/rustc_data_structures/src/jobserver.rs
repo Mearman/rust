@@ -100,10 +100,10 @@ impl Proxy {
             wake_pending: Condvar::new(),
             helper: OnceLock::new(),
         });
-        // wasi has no thread support, so the jobserver helper thread cannot be
-        // spawned there. The proxy still works: with no helper thread no extra
-        // tokens are ever acquired, so it behaves as a single-token client. On
-        // every other platform the helper thread is created exactly as before.
+        // The jobserver helper thread is not spawned on hosts without thread
+        // support (such as wasi). The proxy is still initialised, just without
+        // the background helper. On unix and windows this spawns exactly as
+        // before.
         #[cfg(not(target_os = "wasi"))]
         {
             let proxy_ = Arc::clone(&proxy);
@@ -133,6 +133,7 @@ impl Proxy {
         proxy
     }
 
+    #[cfg(not(target_os = "wasi"))]
     pub fn acquire_thread(&self) {
         let mut data = self.data.lock();
 
@@ -149,6 +150,17 @@ impl Proxy {
             data.pending += 1;
             self.wake_pending.wait(&mut data);
         }
+    }
+
+    /// On hosts without thread support (such as wasi) the jobserver helper thread is never
+    /// spawned in `Proxy::new`, so there is no helper to request a token from. Such hosts run
+    /// compilation synchronously and must never acquire a parallel-compilation token; reaching
+    /// this is a bug, so fail with a meaningful message rather than the opaque `None` unwrap
+    /// that an unguarded `helper.get().unwrap()` would produce. On unix and windows the helper
+    /// is always present and the cfg above applies instead, resolving exactly as before.
+    #[cfg(target_os = "wasi")]
+    pub fn acquire_thread(&self) {
+        panic!("parallel compilation is not supported on this host: no jobserver helper thread");
     }
 
     pub fn release_thread(&self) {
